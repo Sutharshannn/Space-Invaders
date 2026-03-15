@@ -26,7 +26,6 @@
   const pauseDialog = $('#pauseDialog');
 
   const inputBgUrl = $('#bgImageUrl');
-  const inputSpriteUpload = $('#spriteUpload');
 
   const sfxShoot = $('#sfxShoot');
   const sfxExplosion = $('#sfxExplosion');
@@ -47,7 +46,7 @@
 
   const difficultyTable = {
     easy:   { enemyRate: 1.6, enemySpeed: 60,  maxEnemies: 12 },
-    normal: { enemyRate: 1.2, enemySpeed: 90,  maxEnemies: 16 },
+    normal: { enemyRate: 1.0, enemySpeed: 110, maxEnemies: 20 },
     hard:   { enemyRate: 0.9, enemySpeed: 120, maxEnemies: 22 },
     insane: { enemyRate: 0.7, enemySpeed: 160, maxEnemies: 28 }
   };
@@ -62,6 +61,7 @@
   let state = {
     running: false,
     paused: false,
+    gameOver: false,
     lastTs: 0,
     accTime: 0,
     fps: 0,
@@ -69,12 +69,13 @@
     frameTimer: 0,
     score: 0,
     level: 1,
-    lives: 3,
+    lives: 5,
     shield: 100,
     timeSec: 0,
     enemySpawnTimer: 0,
     fireCooldown: 0,
     specialCooldown: 0,
+    cometSpawnTimer: 0,
   };
 
   // Entities
@@ -83,7 +84,7 @@
     y: BASE_HEIGHT - 140,
     r: 18,
     angle: -Math.PI / 2,
-    speed: 240,
+    speed: 320,
     vx: 0,
     vy: 0
   };
@@ -91,6 +92,23 @@
   const bullets = [];
   const enemies = [];
   const particles = [];
+  const comets = [];
+  const enemyBullets = [];
+
+const playerImg = new Image();
+playerImg.src = 'spaceArt/png/player.png';
+
+const enemyImg = new Image();
+enemyImg.src = 'spaceArt/png/enemyShip.png';
+
+const bulletImg = new Image();
+bulletImg.src = 'spaceArt/png/laserGreenShot.png';
+
+const enemyBulletImg = new Image();
+enemyBulletImg.src = 'spaceArt/png/laserRedShot.png';
+
+const enemyUfoImg = new Image();
+enemyUfoImg.src = 'spaceArt/png/enemyUFO.png';
 
   // Background image
   let bgImage = null;
@@ -233,13 +251,17 @@
     state = {
       running: false,
       paused: false,
+      gameOver: false,
       lastTs: 0, accTime: 0, fps: 0, frameCount: 0, frameTimer: 0,
-      score: 0, level: 1, lives: 3, shield: 100, timeSec: 0,
+      score: 0, level: 1, lives: 5, shield: 100, timeSec: 0,
       enemySpawnTimer: 0, fireCooldown: 0, specialCooldown: 0,
+      cometSpawnTimer: 0,
     };
     bullets.length = 0;
     enemies.length = 0;
     particles.length = 0;
+    comets.length = 0;
+    enemyBullets.length = 0;
     player.x = BASE_WIDTH / 2;
     player.y = BASE_HEIGHT - 140;
     player.vx = 0; player.vy = 0; player.angle = -Math.PI / 2;
@@ -342,6 +364,24 @@
       state.enemySpawnTimer = diff.enemyRate;
     }
 
+    state.cometSpawnTimer -= dt;
+    if (state.cometSpawnTimer <= 0) {
+      spawnComet();
+      state.cometSpawnTimer = 6 + Math.random() * 4;
+    }
+
+    for (let i = comets.length - 1; i >= 0; i--) {
+      const c = comets[i];
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
+
+      if (
+      c.x < -100 || c.x > BASE_WIDTH + 100 ||
+      c.y < -100 || c.y > BASE_HEIGHT + 100
+      ) {
+      comets.splice(i, 1);
+    }
+  }
     // Update bullets
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
@@ -362,6 +402,12 @@
       e.x += Math.cos(ang) * e.speed * dt;
       e.y += Math.sin(ang) * e.speed * dt;
       e.a = ang;
+
+      e.shootCooldown -= dt;
+if (e.type === 'ufo' && e.shootCooldown <= 0) {
+  fireEnemyBullet(e);
+  e.shootCooldown = 2 + Math.random() * 2;
+}
 
       // Bullet collision
       let hit = false;
@@ -397,6 +443,33 @@
         }
       }
     }
+
+    for (let i = enemyBullets.length - 1; i >= 0; i--) {
+  const b = enemyBullets[i];
+  b.x += Math.cos(b.a) * b.speed * dt;
+  b.y += Math.sin(b.a) * b.speed * dt;
+  b.life -= dt;
+
+  if (dist2(b.x, b.y, player.x, player.y) < (b.r + player.r) * (b.r + player.r)) {
+    state.shield -= 15;
+    explode(player.x, player.y, 8, 'player');
+    enemyBullets.splice(i, 1);
+
+    if (state.shield <= 0) {
+      state.lives -= 1;
+      state.shield = 100;
+      if (state.lives <= 0) {
+        gameOver();
+        return;
+      }
+    }
+    continue;
+  }
+
+  if (b.life <= 0 || b.x < -20 || b.x > BASE_WIDTH + 20 || b.y < -20 || b.y > BASE_HEIGHT + 20) {
+    enemyBullets.splice(i, 1);
+  }
+}
 
     // Particles
     for (let i = particles.length - 1; i >= 0; i--) {
@@ -440,6 +513,36 @@
       }
     }
 
+    // Comets
+    ctx.save();
+  for (const c of comets) {
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate(c.a);
+
+  const grad = ctx.createLinearGradient(-40, 0, 10, 0);
+  grad.addColorStop(0, 'rgba(255,255,255,0)');
+  grad.addColorStop(0.4, 'rgba(255,255,255,0.2)');
+  grad.addColorStop(1, 'rgba(255,255,200,0.9)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(-40, -4);
+  ctx.lineTo(8, -1);
+  ctx.lineTo(8, 1);
+  ctx.lineTo(-40, 4);
+  ctx.closePath();
+  ctx.fill();
+
+  // comet head
+  ctx.fillStyle = '#fff7c2';
+  ctx.beginPath();
+  ctx.arc(0, 0, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+ctx.restore();
+
     // Effects
     const gfx = graphicsTable[settings.graphics] || graphicsTable.medium;
     if (gfx.blur) {
@@ -447,50 +550,62 @@
     }
 
     // Enemies
-    ctx.save();
-    for (const e of enemies) {
-      ctx.save();
-      ctx.translate(e.x, e.y);
-      ctx.rotate(e.a);
-      ctx.fillStyle = '#ff6b6b';
-      if (gfx.glow) {
-        ctx.shadowColor = '#ff6b6b';
-        ctx.shadowBlur = 12;
-      }
-      ctx.beginPath();
-      ctx.arc(0, 0, e.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-    ctx.restore();
+ctx.save();
+for (const e of enemies) {
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  ctx.rotate(e.a + Math.PI / 2);
+
+  if (e.type === 'ufo') {
+    ctx.drawImage(enemyUfoImg, -e.r, -e.r, e.r * 2, e.r * 2);
+  } else {
+    ctx.drawImage(enemyImg, -e.r, -e.r, e.r * 2, e.r * 2);
+  }
+
+  ctx.restore();
+}
+ctx.restore();
 
     // Bullets
-    ctx.save();
-    for (const b of bullets) {
-      ctx.save();
-      ctx.translate(b.x, b.y);
-      ctx.rotate(b.a);
-      ctx.fillStyle = '#a78bfa';
-      if (gfx.glow) {
-        ctx.shadowColor = '#a78bfa';
-        ctx.shadowBlur = 10;
-      }
-      ctx.fillRect(-2, -8, 4, 16);
-      ctx.restore();
-    }
-    ctx.restore();
+ctx.save();
+for (const b of bullets) {
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  ctx.rotate(b.a + Math.PI / 2);
+  if (gfx.glow) {
+    ctx.shadowColor = '#22c55e';
+    ctx.shadowBlur = 10;
+  }
+  ctx.drawImage(bulletImg, -6, -12, 12, 24);
+  ctx.restore();
+}
+ctx.restore();
+
+// Enemy Bullets
+ctx.save();
+for (const b of enemyBullets) {
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  ctx.rotate(b.a + Math.PI / 2);
+  if (gfx.glow) {
+    ctx.shadowColor = '#ef4444';
+    ctx.shadowBlur = 10;
+  }
+  ctx.drawImage(enemyBulletImg, -6, -12, 12, 24);
+  ctx.restore();
+}
+ctx.restore();
 
     // Player
-    ctx.save();
-    ctx.translate(player.x, player.y);
-    ctx.rotate(player.angle);
-    ctx.fillStyle = '#5ac8fa';
-    if (gfx.glow) {
-      ctx.shadowColor = '#5ac8fa';
-      ctx.shadowBlur = 14;
-    }
-    drawTriangle(0, 0, player.r);
-    ctx.restore();
+ctx.save();
+ctx.translate(player.x, player.y);
+ctx.rotate(player.angle + Math.PI / 2);
+if (gfx.glow) {
+  ctx.shadowColor = '#22c55e';
+  ctx.shadowBlur = 14;
+}
+ctx.drawImage(playerImg, -player.r, -player.r, player.r * 2, player.r * 2);
+ctx.restore();
 
     // Particles
     ctx.save();
@@ -502,33 +617,47 @@
     ctx.globalAlpha = 1;
     ctx.restore();
 
+if (state.gameOver) {
+  ctx.save();
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+  ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+
+  ctx.font = 'bold 56px Arial';
+  ctx.fillText('GAME OVER', BASE_WIDTH / 2, BASE_HEIGHT / 2 - 30);
+
+  ctx.font = '24px Arial';
+  ctx.fillText(`Final Score: ${state.score}`, BASE_WIDTH / 2, BASE_HEIGHT / 2 + 20);
+
+  ctx.font = '18px Arial';
+  ctx.fillText('Press Reset to play again', BASE_WIDTH / 2, BASE_HEIGHT / 2 + 60);
+
+  ctx.restore();
+}
     // Reset filter
     ctx.filter = 'none';
   }
 
   // Helpers: drawing
-  function drawTriangle(x, y, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x - r * 0.7, y - r * 0.9);
-    ctx.lineTo(x - r * 0.7, y + r * 0.9);
-    ctx.closePath();
-    ctx.fill();
+  function drawStars(count, seed) {
+  const rand = mulberry32(seed);
+  ctx.save();
+
+  for (let i = 0; i < count; i++) {
+    const x = Math.floor(rand() * BASE_WIDTH);
+    const y = Math.floor((rand() * BASE_HEIGHT + state.timeSec * (8 + seed * 0.002)) % BASE_HEIGHT);
+    const s = 1 + rand() * 2.5;
+
+    const alpha = 0.4 + rand() * 0.6;
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fillRect(x, y, s, s);
   }
 
-  function drawStars(count, seed) {
-    // Simple deterministic star positions based on seed
-    const rand = mulberry32(Math.floor(state.timeSec * 60) + seed);
-    ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    for (let i = 0; i < count; i++) {
-      const x = Math.floor(rand() * BASE_WIDTH);
-      const y = Math.floor(rand() * BASE_HEIGHT);
-      const s = rand() * 2;
-      ctx.fillRect(x, y, s, s);
-    }
-    ctx.restore();
-  }
+  ctx.restore();
+}
 
   function drawCoverImage(img, x, y, w, h) {
     const iw = img.naturalWidth || img.width;
@@ -550,18 +679,55 @@
     if (edge === 1) { x = BASE_WIDTH + 20; y = Math.random() * BASE_HEIGHT; }
     if (edge === 2) { x = Math.random() * BASE_WIDTH; y = BASE_HEIGHT + 20; }
     if (edge === 3) { x = -20; y = Math.random() * BASE_HEIGHT; }
+    const isUfo = Math.random() < 0.35;
     enemies.push({
-      x, y, r: 16 + Math.random() * 8, a: 0,
-      speed: speed * (0.8 + Math.random() * 0.4)
+      x,
+      y,
+      r: isUfo ? 20 : 16 + Math.random() * 8,
+      a: 0,
+      speed: speed * (0.8 + Math.random() * 0.4),
+      type: isUfo ? 'ufo' : 'ship',
+      shootCooldown: 1.5 + Math.random() * 2
     });
   }
+
+  function fireEnemyBullet(enemy) {
+  const ang = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+
+  enemyBullets.push({
+    x: enemy.x,
+    y: enemy.y,
+    a: ang,
+    speed: 260,
+    life: 3,
+    r: 8
+  });
+}
+
+  function spawnComet() {
+  const fromLeft = Math.random() < 0.5;
+
+  const x = fromLeft ? -60 : BASE_WIDTH + 60;
+  const y = 60 + Math.random() * (BASE_HEIGHT * 0.45);
+
+  const vx = fromLeft ? (140 + Math.random() * 80) : -(140 + Math.random() * 80);
+  const vy = 40 + Math.random() * 40;
+
+  comets.push({
+    x,
+    y,
+    vx,
+    vy,
+    a: Math.atan2(vy, vx)
+  });
+}
 
   function fireBullet() {
     bullets.push({
       x: player.x + Math.cos(player.angle) * (player.r + 6),
       y: player.y + Math.sin(player.angle) * (player.r + 6),
       a: player.angle,
-      speed: 540,
+      speed: 700,
       life: 1.2,
       r: 6
     });
@@ -587,21 +753,25 @@
 
   // Game over
   function gameOver() {
-    state.running = false;
-    // Persist score
-    try {
-      const key = 'spaceGameScores';
-      const list = JSON.parse(localStorage.getItem(key) || '[]');
-      list.push({ initials: 'YOU', score: state.score, t: Date.now() });
-      list.sort((a, b) => b.score - a.score);
-      localStorage.setItem(key, JSON.stringify(list.slice(0, 10)));
-      renderScores(list.slice(0, 10));
-    } catch {
-      // ignore
-    }
-    // Show pause dialog as "Restart"
-    if (!pauseDialog?.open) pauseDialog?.showModal();
+  state.running = false;
+  state.gameOver = true;
+  state.lives = 0;
+  state.shield = 0;
+  updateHUD();
+
+  try {
+    const key = 'spaceGameScores';
+    const list = JSON.parse(localStorage.getItem(key) || '[]');
+    list.push({ initials: 'YOU', score: state.score, t: Date.now() });
+    list.sort((a, b) => b.score - a.score);
+    localStorage.setItem(key, JSON.stringify(list.slice(0, 10)));
+    renderScores(list.slice(0, 10));
+  } catch {
+    // ignore
   }
+
+  render();
+}
 
   function renderScores(list) {
     const ol = $('#scores');
